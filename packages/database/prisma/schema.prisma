@@ -30,6 +30,13 @@ model Facility {
   incidentReports IncidentReport[]
   tasks          Task[]
   documents      Document[]
+  teams          Team[]
+  inventoryItems InventoryItem[]
+  vendors        Vendor[]
+  maintenanceRequests MaintenanceRequest[]
+  communications Communication[]
+  activityEvents ActivityEvent[]
+  incidentCategories IncidentCategory[]
 
   @@map("facilities")
 }
@@ -63,6 +70,11 @@ model Resident {
   // Relations
   facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
   incidentReports   IncidentReport[]
+  familyMembers     FamilyMember[]
+  careRecords       CareRecord[]
+  medicationSchedules MedicationSchedule[]
+  vitalRecords      VitalRecord[]
+  preferences       ResidentPreference[]
 
   @@index([facilityId])
   @@index([status])
@@ -99,6 +111,17 @@ model Staff {
   shifts            Shift[]
   incidentReports   IncidentReport[]
   assignedTasks     Task[]
+  certifications    Certification[]
+  schedulePreferences StaffSchedulePreference[]
+  leaveRequests     LeaveRequest[]
+  performanceReviews StaffPerformanceReview[] @relation("ReviewedStaff")
+  conductedReviews  StaffPerformanceReview[] @relation("Reviewer")
+  teamMemberships   TeamMembership[]
+  uploadedDocuments Document[] @relation("DocumentUploader")
+  careRecords       CareRecord[]
+  vitalRecords      VitalRecord[]
+  communications    Communication[] @relation("CommunicationAuthor")
+  maintenanceRequests MaintenanceRequest[]
 
   @@index([facilityId])
   @@index([status])
@@ -163,6 +186,7 @@ model IncidentReport {
   facilityId        String
   residentId        String?   // 対象利用者（任意）
   reporterId        String    // 報告者（職員）
+  categoryId        String?   // カテゴリID
 
   incidentType      String    // accident, near_miss 等
   severity          String    // low, medium, high, critical
@@ -182,10 +206,13 @@ model IncidentReport {
   facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
   resident          Resident? @relation(fields: [residentId], references: [id], onDelete: SetNull)
   reporter          Staff     @relation(fields: [reporterId], references: [id])
+  category          IncidentCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  followUpActions   IncidentFollowUpAction[]
 
   @@index([facilityId])
   @@index([status])
   @@index([occurredAt])
+  @@index([categoryId])
   @@map("incident_reports")
 }
 
@@ -237,8 +264,615 @@ model Document {
 
   // Relations
   facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  uploader          Staff?    @relation("DocumentUploader", fields: [uploadedBy], references: [id], onDelete: SetNull)
 
   @@index([facilityId])
   @@index([type])
+  @@index([uploadedBy])
   @@map("documents")
+}
+
+// ============================================================
+// STAFF MANAGEMENT - Deep Tracking
+// ============================================================
+
+// 職員資格・認定
+model Certification {
+  id                String    @id @default(cuid())
+  staffId           String
+  name              String    // 資格名（介護福祉士、看護師、ケアマネージャー等）
+  certificationNumber String? // 資格番号
+  issuedBy          String?   // 発行機関
+  issuedDate        DateTime? // 取得日
+  expiryDate        DateTime? // 有効期限
+  status            String    @default("active") // active, expired, suspended
+
+  // 添付書類
+  documentUrl       String?   // 資格証明書のURL
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  staff             Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@index([status])
+  @@index([expiryDate])
+  @@map("certifications")
+}
+
+// 職員スケジュール希望
+model StaffSchedulePreference {
+  id                String    @id @default(cuid())
+  staffId           String
+  dayOfWeek         Int       // 0=日曜, 1=月曜, ..., 6=土曜
+  preferredShiftType String?  // early, day, late, night, off
+  availabilityStatus String   @default("available") // available, unavailable, preferred
+
+  // 時間帯指定
+  startTime         String?   // HH:mm形式
+  endTime           String?   // HH:mm形式
+
+  note              String?   @db.Text // 備考（子供の送迎等）
+
+  // 有効期間
+  effectiveFrom     DateTime  @default(now())
+  effectiveUntil    DateTime?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  staff             Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@index([dayOfWeek])
+  @@map("staff_schedule_preferences")
+}
+
+// 休暇申請
+model LeaveRequest {
+  id                String    @id @default(cuid())
+  staffId           String
+  leaveType         String    // annual_leave, sick_leave, special_leave, maternity_leave 等
+  startDate         DateTime  @db.Date
+  endDate           DateTime  @db.Date
+  totalDays         Float     // 日数（半休の場合は0.5等）
+
+  reason            String?   @db.Text // 理由
+  status            String    @default("pending") // pending, approved, rejected, cancelled
+
+  // 承認情報
+  approvedBy        String?   // 承認者ID
+  approvedAt        DateTime?
+  rejectionReason   String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  staff             Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@index([status])
+  @@index([startDate])
+  @@map("leave_requests")
+}
+
+// 職員パフォーマンスレビュー
+model StaffPerformanceReview {
+  id                String    @id @default(cuid())
+  staffId           String    // 評価対象職員
+  reviewerId        String    // 評価者
+  reviewPeriodStart DateTime  @db.Date
+  reviewPeriodEnd   DateTime  @db.Date
+
+  // 評価項目
+  overallRating     Int?      // 総合評価（1-5等）
+  technicalSkills   Int?      // 技術スキル
+  communication     Int?      // コミュニケーション能力
+  teamwork          Int?      // チームワーク
+  reliability       Int?      // 信頼性
+  initiative        Int?      // 主体性
+
+  strengths         String?   @db.Text // 強み
+  areasForImprovement String? @db.Text // 改善点
+  goals             String?   @db.Text // 目標設定
+  comments          String?   @db.Text // コメント
+
+  status            String    @default("draft") // draft, completed, acknowledged
+  acknowledgedAt    DateTime? // 職員が確認した日時
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  staff             Staff     @relation("ReviewedStaff", fields: [staffId], references: [id], onDelete: Cascade)
+  reviewer          Staff     @relation("Reviewer", fields: [reviewerId], references: [id])
+
+  @@index([staffId])
+  @@index([reviewerId])
+  @@index([reviewPeriodEnd])
+  @@map("staff_performance_reviews")
+}
+
+// チーム/部門
+model Team {
+  id                String    @id @default(cuid())
+  facilityId        String
+  name              String    // チーム名（ケアチームA、看護チーム等）
+  type              String?   // care_team, nursing_team, administrative_team 等
+  description       String?   @db.Text
+
+  leaderId          String?   // リーダーID
+
+  isActive          Boolean   @default(true)
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  members           TeamMembership[]
+
+  @@index([facilityId])
+  @@index([isActive])
+  @@map("teams")
+}
+
+// チームメンバーシップ
+model TeamMembership {
+  id                String    @id @default(cuid())
+  teamId            String
+  staffId           String
+  role              String?   // leader, member, support 等
+
+  joinedAt          DateTime  @default(now())
+  leftAt            DateTime?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  team              Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  staff             Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, staffId])
+  @@index([teamId])
+  @@index([staffId])
+  @@map("team_memberships")
+}
+
+// ============================================================
+// RESIDENT CARE - Enhanced Tracking
+// ============================================================
+
+// 家族・緊急連絡先
+model FamilyMember {
+  id                String    @id @default(cuid())
+  residentId        String
+  lastName          String
+  firstName         String
+  relationship      String    // spouse, child, sibling, other
+
+  phone             String?
+  mobilePhone       String?
+  email             String?
+  address           String?
+
+  isPrimaryContact  Boolean   @default(false)
+  canMakeDecisions  Boolean   @default(false) // 意思決定権限
+  shouldNotify      Boolean   @default(true)  // 通知対象か
+
+  // コミュニケーション設定
+  preferredContactMethod String? // phone, email, sms
+  preferredContactTime   String? // morning, afternoon, evening
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  resident          Resident  @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@index([residentId])
+  @@index([isPrimaryContact])
+  @@map("family_members")
+}
+
+// ケア記録
+model CareRecord {
+  id                String    @id @default(cuid())
+  residentId        String
+  caregiverId       String    // ケア提供者（職員）
+  recordedAt        DateTime  @default(now()) // 記録日時
+
+  careType          String    // bathing, toileting, meal_assistance, medication, mobility_assistance 等
+  description       String    @db.Text // ケア内容詳細
+
+  // 状態観察
+  residentCondition String?   // good, stable, concerning, emergency
+  moodBehavior      String?   // calm, cheerful, anxious, agitated 等
+
+  // 食事記録（該当する場合）
+  mealType          String?   // breakfast, lunch, dinner, snack
+  intakePercentage  Int?      // 摂取量（%）
+
+  // バイタル関連（簡易記録）
+  hasVitalConcerns  Boolean   @default(false)
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  resident          Resident  @relation(fields: [residentId], references: [id], onDelete: Cascade)
+  caregiver         Staff     @relation(fields: [caregiverId], references: [id])
+
+  @@index([residentId])
+  @@index([caregiverId])
+  @@index([recordedAt])
+  @@index([careType])
+  @@map("care_records")
+}
+
+// 服薬スケジュール
+model MedicationSchedule {
+  id                String    @id @default(cuid())
+  residentId        String
+  medicationName    String    // 薬剤名
+  dosage            String    // 用量
+  unit              String?   // mg, ml, 錠 等
+  frequency         String    // daily, twice_daily, three_times_daily, as_needed 等
+
+  // 服用時刻
+  administrationTimes String[] // ["08:00", "12:00", "18:00"] 等
+
+  // 期間
+  startDate         DateTime  @db.Date
+  endDate           DateTime? @db.Date
+
+  // 詳細
+  purpose           String?   @db.Text // 処方目的
+  sideEffects       String?   @db.Text // 副作用情報
+  prescribedBy      String?   // 処方医
+
+  isActive          Boolean   @default(true)
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  resident          Resident  @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@index([residentId])
+  @@index([isActive])
+  @@index([startDate])
+  @@map("medication_schedules")
+}
+
+// バイタル記録
+model VitalRecord {
+  id                String    @id @default(cuid())
+  residentId        String
+  recordedBy        String    // 記録者（職員ID）
+  recordedAt        DateTime  @default(now())
+
+  // バイタルサイン
+  bloodPressureSystolic  Int?  // 収縮期血圧
+  bloodPressureDiastolic Int?  // 拡張期血圧
+  pulseRate         Int?      // 脈拍
+  temperature       Float?    // 体温
+  respiratoryRate   Int?      // 呼吸数
+  oxygenSaturation  Int?      // SpO2
+  bloodGlucose      Int?      // 血糖値
+
+  weight            Float?    // 体重（kg）
+
+  // 状態
+  consciousness     String?   // alert, drowsy, confused, unconscious
+  painLevel         Int?      // 疼痛レベル（0-10）
+
+  notes             String?   @db.Text
+  flaggedAbnormal   Boolean   @default(false)
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  resident          Resident  @relation(fields: [residentId], references: [id], onDelete: Cascade)
+  recorder          Staff     @relation(fields: [recordedBy], references: [id])
+
+  @@index([residentId])
+  @@index([recordedBy])
+  @@index([recordedAt])
+  @@index([flaggedAbnormal])
+  @@map("vital_records")
+}
+
+// 利用者の好み・設定
+model ResidentPreference {
+  id                String    @id @default(cuid())
+  residentId        String
+  category          String    // food, activities, daily_routine, communication 等
+
+  preferenceType    String    // likes, dislikes, allergies, restrictions
+  description       String    @db.Text
+
+  importance        String?   @default("medium") // low, medium, high, critical
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  resident          Resident  @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@index([residentId])
+  @@index([category])
+  @@map("resident_preferences")
+}
+
+// ============================================================
+// INCIDENT MANAGEMENT - Advanced Classification
+// ============================================================
+
+// インシデントカテゴリ
+model IncidentCategory {
+  id                String    @id @default(cuid())
+  facilityId        String
+  name              String    // 転倒、誤薬、離設、暴言・暴力等
+  code              String    // カテゴリコード
+  description       String?   @db.Text
+  severity          String?   // このカテゴリのデフォルト重要度
+
+  requiresFollowUp  Boolean   @default(true)
+
+  isActive          Boolean   @default(true)
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  incidents         IncidentReport[]
+
+  @@unique([facilityId, code])
+  @@index([facilityId])
+  @@index([isActive])
+  @@map("incident_categories")
+}
+
+// インシデントフォローアップアクション
+model IncidentFollowUpAction {
+  id                String    @id @default(cuid())
+  incidentId        String
+  actionType        String    // investigation, training, policy_update, equipment_repair 等
+  description       String    @db.Text
+
+  assignedTo        String?   // 担当者ID
+  dueDate           DateTime?
+  completedAt       DateTime?
+
+  status            String    @default("pending") // pending, in_progress, completed, cancelled
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  incident          IncidentReport @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("incident_follow_up_actions")
+}
+
+// ============================================================
+// OPERATIONAL ENTITIES - Facility Management
+// ============================================================
+
+// 在庫品目
+model InventoryItem {
+  id                String    @id @default(cuid())
+  facilityId        String
+  name              String    // 品目名
+  sku               String?   // SKU/品番
+  category          String    // supplies, medication, equipment, food 等
+
+  // 在庫管理
+  currentStock      Int       @default(0)
+  unit              String    // 個, 箱, kg 等
+  minimumStock      Int?      // 最低在庫数
+  reorderPoint      Int?      // 発注点
+
+  // コスト
+  unitCost          Float?    // 単価
+
+  // 保管場所
+  storageLocation   String?
+
+  // ベンダー
+  preferredVendorId String?
+
+  // ステータス
+  isActive          Boolean   @default(true)
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  preferredVendor   Vendor?   @relation(fields: [preferredVendorId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId])
+  @@index([category])
+  @@index([isActive])
+  @@index([preferredVendorId])
+  @@map("inventory_items")
+}
+
+// ベンダー/取引先
+model Vendor {
+  id                String    @id @default(cuid())
+  facilityId        String
+  name              String    // ベンダー名
+  code              String?   // ベンダーコード
+  type              String    // supplier, service_provider, contractor 等
+
+  // 連絡先
+  contactPerson     String?
+  phone             String?
+  email             String?
+  address           String?
+
+  // 取引情報
+  paymentTerms      String?   // net_30, net_60, cod 等
+  taxId             String?   // 税ID
+
+  isActive          Boolean   @default(true)
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  inventoryItems    InventoryItem[]
+
+  @@unique([facilityId, code])
+  @@index([facilityId])
+  @@index([isActive])
+  @@map("vendors")
+}
+
+// メンテナンス依頼
+model MaintenanceRequest {
+  id                String    @id @default(cuid())
+  facilityId        String
+  requestedBy       String    // 依頼者（職員ID）
+
+  category          String    // plumbing, electrical, hvac, equipment, cleaning 等
+  priority          String    @default("medium") // low, medium, high, urgent
+
+  title             String
+  description       String    @db.Text
+  location          String?   // 場所
+
+  // ステータス管理
+  status            String    @default("pending") // pending, assigned, in_progress, completed, cancelled
+
+  assignedTo        String?   // 担当者（業者等）
+  scheduledDate     DateTime?
+  completedAt       DateTime?
+
+  // コスト
+  estimatedCost     Float?
+  actualCost        Float?
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  requester         Staff     @relation(fields: [requestedBy], references: [id])
+
+  @@index([facilityId])
+  @@index([requestedBy])
+  @@index([status])
+  @@index([priority])
+  @@map("maintenance_requests")
+}
+
+// コミュニケーション/お知らせ
+model Communication {
+  id                String    @id @default(cuid())
+  facilityId        String
+  authorId          String    // 作成者（職員ID）
+
+  type              String    // announcement, memo, alert, notice
+  channel           String    @default("internal") // internal, family_portal, public
+
+  title             String
+  content           String    @db.Text
+
+  // ターゲット
+  targetAudience    String[]  // ["all_staff", "nurses", "families", "management"] 等
+
+  // 有効期間
+  publishedAt       DateTime  @default(now())
+  expiresAt         DateTime?
+
+  priority          String    @default("normal") // low, normal, high, urgent
+
+  // 既読管理
+  requiresAcknowledgment Boolean @default(false)
+
+  isActive          Boolean   @default(true)
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  author            Staff     @relation("CommunicationAuthor", fields: [authorId], references: [id])
+
+  @@index([facilityId])
+  @@index([authorId])
+  @@index([publishedAt])
+  @@index([channel])
+  @@map("communications")
+}
+
+// アクティビティ/イベント
+model ActivityEvent {
+  id                String    @id @default(cuid())
+  facilityId        String
+  title             String
+  description       String?   @db.Text
+
+  activityType      String    // recreation, exercise, social, educational, therapeutic 等
+
+  // 日時
+  scheduledDate     DateTime  @db.Date
+  startTime         String?   // HH:mm形式
+  endTime           String?   // HH:mm形式
+
+  // 場所
+  location          String?
+
+  // 参加者
+  maxParticipants   Int?
+  registeredCount   Int       @default(0)
+
+  // スタッフ
+  facilitatorId     String?   // 進行担当者
+
+  status            String    @default("scheduled") // scheduled, in_progress, completed, cancelled
+
+  notes             String?   @db.Text
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  facility          Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId])
+  @@index([scheduledDate])
+  @@index([status])
+  @@map("activity_events")
 }

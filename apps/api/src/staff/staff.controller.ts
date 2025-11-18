@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { StaffService } from './staff.service';
 import { CreateStaffDto, UpdateStaffDto } from './dto';
 
@@ -10,12 +10,22 @@ export class StaffController {
 
   @Get()
   @ApiOperation({ summary: '職員一覧取得' })
+  @ApiQuery({ name: 'facilityId', required: true, description: '事業所ID' })
   findAll(@Query('facilityId') facilityId: string) {
     return this.staffService.findAll(facilityId);
   }
 
+  @Get('statistics')
+  @ApiOperation({ summary: '職員統計情報取得' })
+  @ApiQuery({ name: 'facilityId', required: true, description: '事業所ID' })
+  getStatistics(@Query('facilityId') facilityId: string) {
+    return this.staffService.getStaffStatistics(facilityId);
+  }
+
   @Get('on-duty')
   @ApiOperation({ summary: '出勤職員取得' })
+  @ApiQuery({ name: 'facilityId', required: true, description: '事業所ID' })
+  @ApiQuery({ name: 'date', required: true, description: '対象日（YYYY-MM-DD）', example: '2024-01-20' })
   getOnDutyStaff(
     @Query('facilityId') facilityId: string,
     @Query('date') date: string,
