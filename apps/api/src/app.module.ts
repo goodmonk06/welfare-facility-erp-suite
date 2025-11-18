@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
+import { FacilitiesModule } from './facilities/facilities.module';
 import { ResidentsModule } from './residents/residents.module';
 import { StaffModule } from './staff/staff.module';
 import { IncidentsModule } from './incidents/incidents.module';
@@ -14,6 +15,7 @@ import { IntegrationModule } from './integration/integration.module';
       isGlobal: true,
     }),
     PrismaModule,
+    FacilitiesModule,
     ResidentsModule,
     StaffModule,
     IncidentsModule,

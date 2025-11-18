@@ -9,12 +9,16 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "start": "turbo run start",
+    "test": "turbo run test",
     "lint": "turbo run lint",
     "clean": "turbo run clean",
     "db:generate": "cd packages/database && pnpm prisma generate",
     "db:push": "cd packages/database && pnpm prisma db push",
     "db:migrate": "cd packages/database && pnpm prisma migrate dev",
-    "db:studio": "cd packages/database && pnpm prisma studio"
+    "db:seed": "cd packages/database && pnpm db:seed",
+    "db:studio": "cd packages/database && pnpm prisma studio",
+    "setup": "pnpm install && pnpm db:generate && pnpm db:push && pnpm db:seed"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

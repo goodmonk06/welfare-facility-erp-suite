@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateResidentDto, UpdateResidentDto } from './dto';
 
@@ -7,14 +7,27 @@ export class ResidentsService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(facilityId: string) {
+    if (!facilityId) {
+      throw new BadRequestException('facilityId is required');
+    }
+
     return this.prisma.resident.findMany({
       where: { facilityId },
       orderBy: { lastName: 'asc' },
+      include: {
+        facility: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
+      },
     });
   }
 
   async findOne(id: string) {
-    return this.prisma.resident.findUnique({
+    const resident = await this.prisma.resident.findUnique({
       where: { id },
       include: {
         facility: true,
@@ -24,22 +37,59 @@ export class ResidentsService {
         },
       },
     });
+
+    if (!resident) {
+      throw new NotFoundException(`Resident with ID ${id} not found`);
+    }
+
+    return resident;
   }
 
   async create(data: CreateResidentDto) {
+    // Verify facility exists
+    const facility = await this.prisma.facility.findUnique({
+      where: { id: data.facilityId },
+    });
+
+    if (!facility) {
+      throw new BadRequestException(`Facility with ID ${data.facilityId} not found`);
+    }
+
     return this.prisma.resident.create({
       data,
+      include: {
+        facility: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
+      },
     });
   }
 
   async update(id: string, data: UpdateResidentDto) {
+    await this.findOne(id); // Check existence
+
     return this.prisma.resident.update({
       where: { id },
       data,
+      include: {
+        facility: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
+      },
     });
   }
 
   async remove(id: string) {
+    await this.findOne(id); // Check existence
+
     return this.prisma.resident.delete({
       where: { id },
     });
